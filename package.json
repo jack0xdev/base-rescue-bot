@@ -1,0 +1,27 @@
+{
+  "name": "base-rescue-bot",
+  "version": "1.0.0",
+  "description": "Flashbots-style bundle bot to rescue airdropped tokens from a compromised wallet on Base chain",
+  "main": "src/bot.js",
+  "type": "module",
+  "scripts": {
+    "start":         "node src/bot.js",
+    "monitor":       "node src/bot.js --monitor-only",
+    "simulate":      "node src/bot.js --simulate",
+    "check":         "node src/utils/checkBalances.js",
+    "dryrun":        "node src/utils/dryRun.js",
+    "calldata":      "node src/utils/calldataGen.js",
+    "status":        "node src/utils/checkBundle.js"
+  },
+  "dependencies": {
+    "chalk":   "^5.3.0",
+    "dotenv":  "^16.4.5",
+    "ethers":  "^6.13.2",
+    "ora":     "^8.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "",
+  "license": "MIT"
+}
