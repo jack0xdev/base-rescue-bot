@@ -178,6 +178,128 @@ export class BundleBuilder {
     };
   }
 
+  /**
+   * Build a rescue-only bundle for watch mode.
+   * Does NOT include Tx1 (ETH fund) — ETH is assumed to already be in hacked wallet.
+   *
+   * Bundle order (all same block):
+   *   [Optional] Tx A — Hacked Wallet → Airdrop Contract : claim()
+   *              Tx B — Hacked Wallet → Safe Wallet       : transfer all tokens
+   *
+   * @param {number}  targetBlockNumber
+   * @param {object}  [opts]
+   * @param {boolean} [opts.includeAirdropClaim=true] - Set false to skip claim tx
+   * @returns {Promise<{ signedTxs: string[], bundle: object }>}
+   */
+  async buildRescueOnly(targetBlockNumber, opts = { includeAirdropClaim: true }) {
+    const includeAirdropClaim = opts.includeAirdropClaim !== false;
+    log.bundle(
+      `Building rescue-only bundle for block #${targetBlockNumber} ` +
+      `(airdropClaim: ${includeAirdropClaim})`
+    );
+
+    // ── Gas params ────────────────────────────────────────────────────────────
+    const gasParams = await getAggressiveGasParams(this.provider);
+    const { maxFeePerGas, maxPriorityFeePerGas } = gasParams;
+
+    // ── Nonce — only hacked wallet needed ─────────────────────────────────────
+    const hackedNonce = await this.provider.getTransactionCount(
+      this.hackedWallet.address,
+      "latest"
+    );
+    log.info(`Hacked nonce: ${hackedNonce}`);
+
+    // ── Check token balance (guard against false trigger) ─────────────────────
+    const tokenDecimals = await this.tokenContract.decimals().catch(() => 18n);
+    const tokenSymbol   = await this.tokenContract.symbol().catch(() => "TOKEN");
+    const currentBalance = await this.tokenContract.balanceOf(this.hackedWallet.address);
+
+    log.info(
+      `Hacked wallet ${tokenSymbol} balance: ` +
+      `${ethers.formatUnits(currentBalance, tokenDecimals)}`
+    );
+
+    const signedTxs = [];
+    const txObjects  = [];
+    let   nextNonce  = hackedNonce;
+
+    // ── TX A (optional): Claim airdrop ────────────────────────────────────────
+    if (includeAirdropClaim) {
+      log.step(1, 2, "Building claim tx (Hacked → Airdrop contract) …");
+      const claimGas = await this._estimateTx2Gas(maxFeePerGas);
+
+      const txClaim = {
+        type:                 2,
+        chainId:              config.chainId,
+        nonce:                nextNonce,
+        to:                   config.airdropContract,
+        value:                0n,
+        gasLimit:             claimGas,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+        data:                 config.airdropClaimCalldata,
+      };
+
+      const signedClaim = await this.hackedWallet.signTransaction(txClaim);
+      signedTxs.push(signedClaim);
+      txObjects.push(txClaim);
+      nextNonce += 1;
+    }
+
+    // ── TX B: Sweep tokens to safe wallet ─────────────────────────────────────
+    log.step(includeAirdropClaim ? 2 : 1, includeAirdropClaim ? 2 : 1, "Building sweep tx (Hacked → Safe wallet) …");
+
+    const sweepGas = await this._estimateTx3Gas(maxFeePerGas);
+
+    // If tokens are already in wallet use that; else encode expected airdrop amount
+    const transferAmount = currentBalance > 0n
+      ? currentBalance
+      : ethers.parseUnits("1000000", tokenDecimals);
+
+    if (currentBalance === 0n) {
+      log.warn(
+        `Token balance is 0 — encoding placeholder amount. ` +
+        `Rescue will succeed only after claim tx mints tokens.`
+      );
+    }
+
+    const transferCalldata = this.tokenContract.interface.encodeFunctionData(
+      "transfer",
+      [this.safeWallet.address, transferAmount]
+    );
+
+    const txSweep = {
+      type:                 2,
+      chainId:              config.chainId,
+      nonce:                nextNonce,
+      to:                   config.airdropTokenAddress,
+      value:                0n,
+      gasLimit:             sweepGas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      data:                 transferCalldata,
+    };
+
+    const signedSweep = await this.hackedWallet.signTransaction(txSweep);
+    signedTxs.push(signedSweep);
+    txObjects.push(txSweep);
+
+    log.success("Rescue-only bundle signed:");
+    if (includeAirdropClaim) {
+      log.info(`  TxA (claim) → to: ${config.airdropContract}`);
+    }
+    log.info(`  TxB (sweep) → to: ${this.safeWallet.address}`);
+
+    return {
+      signedTxs,
+      bundle: {
+        txs: txObjects,
+        targetBlockNumber,
+        gasParams,
+      },
+    };
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
 
   async _estimateTx2Gas(maxFeePerGas) {

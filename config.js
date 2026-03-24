@@ -43,4 +43,8 @@ export const config = {
 
   // Optional
   bloxrouteApiKey: optionalEnv("BLOXROUTE_API_KEY", null),
+
+  // Watch mode
+  wsRpcUrl:      optionalEnv("WS_RPC_URL", null),
+  minEthTrigger: optionalEnv("MIN_ETH_TRIGGER", "0.0003"),
 };
