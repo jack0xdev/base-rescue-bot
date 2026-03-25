@@ -43,4 +43,11 @@ export const config = {
 
   // Optional
   bloxrouteApiKey: optionalEnv("BLOXROUTE_API_KEY", null),
+
+  // Watch mode
+  wsRpcUrl:      optionalEnv("WS_RPC_URL", null),
+  minEthTrigger: optionalEnv("MIN_ETH_TRIGGER", "0.0003"),
+
+  // Expected airdrop token amount (set this to avoid placeholder transfer)
+  expectedAirdropAmount: optionalEnv("EXPECTED_AIRDROP_AMOUNT", null),
 };
