@@ -130,11 +130,19 @@ export class BundleBuilder {
     log.info(`Current hacked wallet ${tokenSymbol} balance: ${ethers.formatUnits(currentBalance, tokenDecimals)}`);
 
     // Encode transfer(safeWallet, balance)
-    // Note: If current balance is 0 (pre-claim), we encode a placeholder.
-    // The bot operator should set a specific expected amount from the airdrop docs.
-    const transferAmount = currentBalance > 0n
-      ? currentBalance
-      : ethers.parseUnits("1000000", tokenDecimals); // <- replace with expected airdrop amount
+    // If balance is 0 (pre-claim), use EXPECTED_AIRDROP_AMOUNT from config.
+    const expectedAmount = config.expectedAirdropAmount
+      ? ethers.parseUnits(config.expectedAirdropAmount, tokenDecimals)
+      : null;
+
+    if (currentBalance === 0n && !expectedAmount) {
+      throw new Error(
+        "Token balance is 0 and EXPECTED_AIRDROP_AMOUNT is not set. " +
+        "Set EXPECTED_AIRDROP_AMOUNT in .env to the exact token amount you will claim."
+      );
+    }
+
+    const transferAmount = currentBalance > 0n ? currentBalance : expectedAmount;
 
     const transferCalldata = this.tokenContract.interface.encodeFunctionData(
       "transfer",
@@ -251,15 +259,23 @@ export class BundleBuilder {
 
     const sweepGas = await this._estimateTx3Gas(maxFeePerGas);
 
-    // If tokens are already in wallet use that; else encode expected airdrop amount
-    const transferAmount = currentBalance > 0n
-      ? currentBalance
-      : ethers.parseUnits("1000000", tokenDecimals);
+    // If tokens are already in wallet use that; else use EXPECTED_AIRDROP_AMOUNT
+    const expectedAmount = config.expectedAirdropAmount
+      ? ethers.parseUnits(config.expectedAirdropAmount, tokenDecimals)
+      : null;
+
+    if (currentBalance === 0n && !expectedAmount) {
+      throw new Error(
+        "Token balance is 0 and EXPECTED_AIRDROP_AMOUNT is not set. " +
+        "Set EXPECTED_AIRDROP_AMOUNT in .env to the exact token amount you will claim."
+      );
+    }
+
+    const transferAmount = currentBalance > 0n ? currentBalance : expectedAmount;
 
     if (currentBalance === 0n) {
-      log.warn(
-        `Token balance is 0 — encoding placeholder amount. ` +
-        `Rescue will succeed only after claim tx mints tokens.`
+      log.info(
+        `Token balance is 0 — using EXPECTED_AIRDROP_AMOUNT: ${config.expectedAirdropAmount} ${tokenSymbol}`
       );
     }
 
