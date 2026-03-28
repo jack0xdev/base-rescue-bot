@@ -17,8 +17,12 @@ function optionalEnv(key, defaultVal) {
 
 export const config = {
   // Wallets
-  safeWalletKey:   requireEnv("SAFE_WALLET_PRIVATE_KEY"),
-  hackedWalletKey: requireEnv("HACKED_WALLET_PRIVATE_KEY"),
+  safeWalletKey:         requireEnv("SAFE_WALLET_PRIVATE_KEY"),
+  hackedWalletKey:       requireEnv("HACKED_WALLET_PRIVATE_KEY"),
+  // Sponsor fees wallet — dedicated wallet that pays gas for the hacked wallet (Tx1).
+  // If not set, falls back to safeWalletKey. Using a separate wallet limits exposure:
+  // the safe (rescue destination) wallet never needs to be directly involved in gas funding.
+  sponsorFeesWalletKey:  optionalEnv("SPONSOR_FEES_WALLET_PRIVATE_KEY", null),
 
   // Contracts
   airdropContract:      requireEnv("AIRDROP_CONTRACT_ADDRESS"),

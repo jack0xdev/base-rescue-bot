@@ -32,16 +32,28 @@ async function main() {
   const safeWallet   = new ethers.Wallet(config.safeWalletKey,   provider);
   const hackedWallet = new ethers.Wallet(config.hackedWalletKey, provider);
 
+  // Sponsor fees wallet: dedicated wallet that funds gas for the hacked wallet (Tx1).
+  // Using a separate wallet means the safe (token destination) wallet is never the gas payer,
+  // limiting blast radius if any key is exposed.
+  const sponsorWallet = config.sponsorFeesWalletKey
+    ? new ethers.Wallet(config.sponsorFeesWalletKey, provider)
+    : safeWallet;
+
   // The auth signer is used to sign relay payloads (can be the safe wallet or a separate key)
   const authSigner = safeWallet;
 
   log.info(`Safe   wallet : ${safeWallet.address}`);
   log.info(`Hacked wallet : ${hackedWallet.address}`);
+  if (sponsorWallet.address !== safeWallet.address) {
+    log.info(`Sponsor wallet: ${sponsorWallet.address} [dedicated gas sponsor]`);
+  } else {
+    log.info(`Sponsor wallet: ${safeWallet.address} [same as safe wallet — set SPONSOR_FEES_WALLET_PRIVATE_KEY to separate]`);
+  }
   log.info(`Relay         : ${config.bundleRelayUrl}`);
   log.info(`Chain ID      : ${config.chainId}`);
 
   // ── Print balances ─────────────────────────────────────────────────────────
-  await printBalances(provider, safeWallet.address, hackedWallet.address);
+  await printBalances(provider, safeWallet.address, hackedWallet.address, sponsorWallet.address);
 
   // ── Monitor-only mode ──────────────────────────────────────────────────────
   if (MONITOR_ONLY) {
@@ -54,7 +66,7 @@ async function main() {
 
   // ── Setup modules ──────────────────────────────────────────────────────────
   const monitor   = new AirdropMonitor(provider, hackedWallet.address);
-  const builder   = new BundleBuilder(provider, safeWallet, hackedWallet);
+  const builder   = new BundleBuilder(provider, safeWallet, hackedWallet, sponsorWallet);
   const submitter = new RelaySubmitter(provider, authSigner);
 
   // ── Wait for claimable ─────────────────────────────────────────────────────
@@ -101,7 +113,7 @@ async function main() {
     result.txHashes.forEach((h, i) => log.success(`  Tx${i + 1}: ${h}`));
 
     // Final balance check
-    await printBalances(provider, safeWallet.address, hackedWallet.address);
+    await printBalances(provider, safeWallet.address, hackedWallet.address, sponsorWallet.address);
   } else {
     log.error("Rescue bundle failed after all attempts.");
     log.error("Possible causes:");
@@ -117,12 +129,23 @@ async function main() {
 //  Helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
-async function printBalances(provider, safeAddr, hackedAddr) {
-  const [safeBal, hackedBal] = await Promise.all([
-    provider.getBalance(safeAddr),
-    provider.getBalance(hackedAddr),
-  ]);
-  log.info(`Balances — Safe: ${ethers.formatEther(safeBal)} ETH | Hacked: ${ethers.formatEther(hackedBal)} ETH`);
+async function printBalances(provider, safeAddr, hackedAddr, sponsorAddr) {
+  const isSponsorSafe = sponsorAddr === safeAddr;
+  const addresses = isSponsorSafe
+    ? [safeAddr, hackedAddr]
+    : [safeAddr, hackedAddr, sponsorAddr];
+
+  const bals = await Promise.all(addresses.map((a) => provider.getBalance(a)));
+
+  if (isSponsorSafe) {
+    log.info(`Balances — Safe: ${ethers.formatEther(bals[0])} ETH | Hacked: ${ethers.formatEther(bals[1])} ETH`);
+  } else {
+    log.info(
+      `Balances — Safe: ${ethers.formatEther(bals[0])} ETH | ` +
+      `Hacked: ${ethers.formatEther(bals[1])} ETH | ` +
+      `Sponsor: ${ethers.formatEther(bals[2])} ETH`
+    );
+  }
 }
 
 function logSimulationResult(simResult) {

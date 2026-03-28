@@ -21,14 +21,17 @@ const ERC20_ABI = [
 export class BundleBuilder {
   /**
    * @param {ethers.JsonRpcProvider} provider
-   * @param {ethers.Wallet}          safeWallet
-   * @param {ethers.Wallet}          hackedWallet
+   * @param {ethers.Wallet}          safeWallet      - Receives rescued tokens (Tx3 destination)
+   * @param {ethers.Wallet}          hackedWallet    - Compromised wallet; signs Tx2 + Tx3
+   * @param {ethers.Wallet}          [sponsorWallet] - Pays gas ETH to hacked wallet (Tx1).
+   *                                                   Defaults to safeWallet if not provided.
    */
-  constructor(provider, safeWallet, hackedWallet) {
-    this.provider      = provider;
-    this.safeWallet    = safeWallet;
-    this.hackedWallet  = hackedWallet;
-    this.tokenContract = new ethers.Contract(
+  constructor(provider, safeWallet, hackedWallet, sponsorWallet = null) {
+    this.provider       = provider;
+    this.safeWallet     = safeWallet;
+    this.hackedWallet   = hackedWallet;
+    this.sponsorWallet  = sponsorWallet ?? safeWallet;  // separate gas-sponsor or fall back
+    this.tokenContract  = new ethers.Contract(
       config.airdropTokenAddress,
       ERC20_ABI,
       provider
@@ -50,12 +53,15 @@ export class BundleBuilder {
     const { maxFeePerGas, maxPriorityFeePerGas } = gasParams;
 
     // ── Fetch nonces ──────────────────────────────────────────────────────────
-    const [safeNonce, hackedNonce] = await Promise.all([
-      this.provider.getTransactionCount(this.safeWallet.address, "latest"),
+    const [sponsorNonce, hackedNonce] = await Promise.all([
+      this.provider.getTransactionCount(this.sponsorWallet.address, "latest"),
       this.provider.getTransactionCount(this.hackedWallet.address, "latest"),
     ]);
 
-    log.info(`Safe nonce: ${safeNonce} | Hacked nonce: ${hackedNonce}`);
+    const sponsorLabel = this.sponsorWallet.address === this.safeWallet.address
+      ? "Safe (sponsor)"
+      : "Sponsor fees";
+    log.info(`${sponsorLabel} nonce: ${sponsorNonce} | Hacked nonce: ${hackedNonce}`);
 
     // ── TX 1: ETH from Safe → Hacked (gas funding) ───────────────────────────
     log.step(1, 3, "Building Tx1: fund hacked wallet with ETH for gas …");
@@ -85,7 +91,7 @@ export class BundleBuilder {
     const tx1 = {
       type:                 2,
       chainId:              config.chainId,
-      nonce:                safeNonce,
+      nonce:                sponsorNonce,
       to:                   this.hackedWallet.address,
       value:                ethToSend,
       gasLimit:             tx1GasLimit,
@@ -156,7 +162,7 @@ export class BundleBuilder {
     // ── Sign all transactions ─────────────────────────────────────────────────
     log.bundle("Signing transactions …");
     const [signedTx1, signedTx2, signedTx3] = await Promise.all([
-      this.safeWallet.signTransaction(tx1),
+      this.sponsorWallet.signTransaction(tx1),
       this.hackedWallet.signTransaction(tx2),
       this.hackedWallet.signTransaction(tx3),
     ]);
@@ -164,7 +170,7 @@ export class BundleBuilder {
     const signedTxs = [signedTx1, signedTx2, signedTx3];
 
     log.success("Bundle signed successfully:");
-    log.info(`  Tx1 (ETH fund)    → from: ${this.safeWallet.address}`);
+    log.info(`  Tx1 (ETH fund)    → from: ${this.sponsorWallet.address} [sponsor fees wallet]`);
     log.info(`  Tx2 (claim)       → to:   ${config.airdropContract}`);
     log.info(`  Tx3 (token sweep) → to:   ${this.safeWallet.address}`);
 
